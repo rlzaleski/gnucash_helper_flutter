@@ -5,7 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:gnucash_helper_flutter/preferences_service.dart';
 import 'package:sqflite/sqflite.dart';
 // Use this import if you're running on desktop platforms
-// import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 
 void main() async {
@@ -13,10 +13,10 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize FFI for sqflite if running on desktop (Windows, Linux, macOS)
-  // if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-  //   sqfliteFfiInit();
-  //   databaseFactory = databaseFactoryFfi;
-  // }
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
 
   runApp(const MyApp());
 }

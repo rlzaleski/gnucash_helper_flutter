@@ -37,6 +37,7 @@ dependencies:
   shared_preferences: ^2.2.4
   sqflite: ^2.3.5
   file_picker: ^8.0.6
+  sqflite_common_ffi: ^2.3.3 # Added for desktop SQLite support
 
 dev_dependencies:
   flutter_test:
