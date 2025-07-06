@@ -1,122 +1,242 @@
-import 'package:flutter/material.dart';
+import 'dart:io';
 
-void main() {
+import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:gnucash_helper_flutter/database_validator.dart'; // Added import
+import 'package:gnucash_helper_flutter/preferences_service.dart';
+// Use this import if you're running on desktop platforms
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+
+void main() async {
+  // Ensure that widget binding is initialized before using platform channels.
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize FFI for sqflite if running on desktop (Windows, Linux, macOS)
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
+
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'GnuCash Helper',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueAccent),
+        useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const HomePage(title: 'GnuCash File Setup'),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
+class HomePage extends StatefulWidget {
+  const HomePage({super.key, required this.title});
 
   final String title;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<HomePage> createState() => _HomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _HomePageState extends State<HomePage> {
+  final PreferencesService _preferencesService = PreferencesService();
+  String? _gnucashFilePath;
+  Database? _db;
+  bool _isLoading = true;
+  String _dbStatus = 'No database connected.';
 
-  void _incrementCounter() {
+  @override
+  void initState() {
+    super.initState();
+    _checkAndLoadGnuCashPath();
+  }
+
+  @override
+  void dispose() {
+    _closeDatabase();
+    super.dispose();
+  }
+
+  Future<void> _closeDatabase() async {
+    if (_db != null && _db!.isOpen) {
+      await _db!.close();
+      setState(() {
+        _db = null;
+        _dbStatus = 'Database closed.';
+      });
+    }
+  }
+
+ Future<void> _connectToDatabase(String filePath) async {
+    await _closeDatabase(); // Close any existing connection first
+    Database? tempDb;
+    try {
+      // Note: For read-only access, you can use `readOnly: true`
+      tempDb = await openDatabase(filePath);
+
+      if (!await DatabaseValidator.isValidGnuCashDatabase(tempDb)) {
+        await tempDb.close(); // Close the DB if it's not valid
+        tempDb = null; // Ensure _db is not set with an invalid DB
+        throw Exception('File is not a valid GnuCash database (missing "accounts" table).');
+      }
+
+      // If validation passes
+      setState(() {
+        _db = tempDb;
+        _dbStatus = 'Successfully connected to GnuCash database!';
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_dbStatus), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      // Ensure tempDb is closed if it was opened and an error occurred
+      // (e.g. during validation, or if openDatabase itself failed)
+      if (tempDb != null && tempDb.isOpen) {
+        await tempDb.close();
+      }
+      setState(() {
+        _db = null; // Ensure _db is null on any error
+        _dbStatus = 'Error: ${e.toString()}';
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_dbStatus), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _checkAndLoadGnuCashPath() async {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _isLoading = true;
+      _dbStatus = 'Checking for GnuCash file...';
     });
+    String? path = await _preferencesService.getGnuCashFilePath();
+    if (path != null && await File(path).exists()) {
+      setState(() {
+        _gnucashFilePath = path;
+      });
+      await _connectToDatabase(path);
+    } else {
+      if (path != null) {
+        await _preferencesService.clearGnuCashFilePath();
+      }
+      setState(() {
+        _gnucashFilePath = null;
+        _dbStatus = 'GnuCash file not found or not set.';
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _pickAndSetGnuCashFile(showAlert: true);
+        }
+      });
+    }
+    setState(() {
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _pickAndSetGnuCashFile({bool showAlert = false}) async {
+    if (showAlert && mounted) {
+      await showDialog<void>(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('GnuCash File Not Found or Invalid'),
+            content: const Text(
+                'The previously selected GnuCash file was not found, is invalid, or a file has not been selected yet. Please select your GnuCash SQLite file.'),
+            actions: <Widget>[
+              TextButton(
+                child: const Text('OK'),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['gnucash', 'sqlite', 'db', 'sqlite3'],
+    );
+
+    if (result != null && result.files.single.path != null) {
+      String path = result.files.single.path!;
+      await _preferencesService.setGnuCashFilePath(path);
+      setState(() {
+        _gnucashFilePath = path;
+      });
+      await _connectToDatabase(path);
+    } else {
+      if (mounted && _gnucashFilePath == null) {
+         ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No GnuCash file selected. Please select a file to continue.')),
+        );
+        setState(() {
+          _dbStatus = 'No GnuCash file selected.';
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
         title: Text(widget.title),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
+        child: _isLoading
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(_dbStatus),
+                ],
+              )
+            : Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: <Widget>[
+                    Text(
+                      _gnucashFilePath ?? 'No GnuCash file selected.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      _dbStatus,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: _db != null && _db!.isOpen ? Colors.green : Colors.red,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: () => _pickAndSetGnuCashFile(showAlert: _gnucashFilePath == null),
+                      child: Text(_gnucashFilePath == null ? 'Select GnuCash File' : 'Change GnuCash File'),
+                    ),
+                  ],
+                ),
+              ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }
