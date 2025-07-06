@@ -36,7 +36,7 @@ jobs:
         run: flutter build linux --release
 
       - name: Archive Linux artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: linux-release
           path: build/linux/x64/release/bundle/ # Adjust path if your Flutter output is different
@@ -66,7 +66,7 @@ jobs:
         run: flutter build windows --release
 
       - name: Archive Windows artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: windows-release
           path: build/windows/runner/Release/ # Adjust path if your Flutter output is different (check build/windows/PROJECT_NAME/Release for newer flutter versions)
@@ -82,13 +82,13 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Download Linux artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: linux-release
           path: artifacts/linux
 
       - name: Download Windows artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: windows-release
           path: artifacts/windows
